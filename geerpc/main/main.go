@@ -4,6 +4,8 @@ import (
 	"geerpc"
 	"log"
 	"net"
+	"context"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -19,26 +21,16 @@ func (f Foo) Sum(args Args, reply *int) error {
 
 func startServer(addr chan string) {
 	var foo Foo
-	if err := geerpc.Register(&foo); err != nil {
-		log.Fatal("register error:", err)
-	}
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		log.Fatal("network error:", err)
-	}
-	log.Println("start rpc server on", l.Addr())
+	l, _ := net.Listen("tcp", ":9999")
+	_ = geerpc.Register(&foo)
+	geerpc.HandleHTTP()
 	addr <- l.Addr().String()
-	geerpc.Accept(l)
+	_ = http.Serve(l, nil)
 }
 
-func main(){
-	log.SetFlags(0)
-	addr := make(chan string)
-	go startServer(addr)
-
-	client, _ := geerpc.Dial("tcp", <-addr)
+func call(addr chan string) {
+	client, _ := geerpc.DialHTTP("tcp", <-addr)
 	defer func() {_=client.Close()}()
-
 	time.Sleep(time.Second)
 
 	var wg sync.WaitGroup
@@ -49,11 +41,18 @@ func main(){
 			defer wg.Done()
 			args := &Args{Num1: i, Num2: i * i}
 			var reply int 
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+			if err := client.Call(context.Background(), "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
-			log.Println("%d + %d = %d", args.Num1, args.Num2, reply)
+			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	wg.Wait()
+}
+
+func main(){
+	log.SetFlags(0)
+	addr := make(chan string)
+	go call(addr)
+	startServer(addr)
 }
